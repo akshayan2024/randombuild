@@ -1,0 +1,11 @@
+{
+  "name": "random-buildings",
+  "private": true,
+  "workspaces": ["apps/web", "apps/server"],
+  "scripts": {
+    "dev:web": "npm -w apps/web run dev",
+    "dev:server": "npm -w apps/server run dev",
+    "test": "npm -w apps/web test && npm -w apps/server test"
+  }
+}
+
