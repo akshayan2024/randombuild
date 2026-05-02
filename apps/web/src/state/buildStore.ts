@@ -20,9 +20,6 @@ export const useBuildStore = create<State>((set, get) => ({
   setSelectedBlock: (t) => set({ selectedBlock: t }),
   placeBlock: (pos) => {
     const selected = get().selectedBlock;
-    // Fix 7: respect the level's maxBlocks limit
-    const maxBlocks = useGameStore.getState().level?.limits.maxBlocks ?? Infinity;
-    if (Object.keys(get().blocks).length >= maxBlocks) return;
     const key = keyOf(pos);
     set((s) => ({ blocks: { ...s.blocks, [key]: selected } }));
   },
@@ -37,9 +34,6 @@ export const useBuildStore = create<State>((set, get) => ({
   },
   hasBlock: (pos) => keyOf(pos) in get().blocks,
   commitBlockAt: (pos, type) => {
-    // Fix 7: respect the level's maxBlocks limit
-    const maxBlocks = useGameStore.getState().level?.limits.maxBlocks ?? Infinity;
-    if (Object.keys(get().blocks).length >= maxBlocks) return;
     const key = keyOf(pos);
     set((s) => ({ blocks: { ...s.blocks, [key]: type } }));
   },
