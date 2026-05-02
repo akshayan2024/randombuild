@@ -1,8 +1,10 @@
 import React from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
+import { MOUSE } from "three";
 import { Grid } from "./Grid";
 import { Blocks } from "./Blocks";
+import { PhysicsWorld } from "./physics/PhysicsWorld";
 import { useBuildStore } from "../state/buildStore";
 
 export function SceneRoot() {
@@ -15,16 +17,25 @@ export function SceneRoot() {
       <color attach="background" args={["#0b1220"]} />
       <ambientLight intensity={0.7} />
       <directionalLight position={[10, 20, 10]} intensity={1} castShadow />
-      <OrbitControls makeDefault />
+      <OrbitControls
+        makeDefault
+        mouseButtons={{
+          LEFT: MOUSE.PAN,      // left drag = pan (no conflict with click-to-place)
+          MIDDLE: MOUSE.DOLLY,  // middle = zoom
+          RIGHT: MOUSE.ROTATE,  // right drag = rotate camera
+        }}
+      />
       <Grid />
       <Blocks />
+      <PhysicsWorld />
 
-      {/* Ground click-catcher: place blocks at y=0, auto-stack if occupied */}
+      {/* Ground click-catcher: place blocks at y=0, auto-stack if occupied.
+           Uses onClick (not onPointerDown) so that a drag-to-rotate never
+           accidentally places a block — onClick only fires on genuine short clicks. */}
       <mesh
         rotation={[-Math.PI / 2, 0, 0]}
         position={[0, 0, 0]}
-        onPointerDown={(e) => {
-          if (e.button !== 0) return;
+        onClick={(e) => {
           e.stopPropagation();
           const p = e.point;
           const x = Math.floor(p.x);

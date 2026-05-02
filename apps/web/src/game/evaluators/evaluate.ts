@@ -81,8 +81,12 @@ export function scoreBuild(args: {
   const lines: ScoreLine[] = args.scoring.map((s) => {
     const r = results.get(s.ruleId) ?? { ruleId: s.ruleId, met: false, detail: "Missing rule" };
     const text = ruleText.get(s.ruleId) ?? s.ruleId;
-    // penalty mode: subtract points when condition is NOT met (too many bad things)
-    const adjusted = s.mode === "penalty" ? (r.met ? 0 : s.points) : r.met ? s.points : 0;
+    // penalty mode: deduct when condition is NOT met. Always negate so AI-generated
+    // positive penalty points (e.g. 200 instead of -200) still subtract correctly.
+    const adjusted =
+      s.mode === "penalty"
+        ? r.met ? 0 : -Math.abs(s.points)
+        : r.met ? s.points : 0;
 
     return {
       ruleId: s.ruleId,

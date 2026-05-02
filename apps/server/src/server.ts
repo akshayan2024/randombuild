@@ -1,8 +1,22 @@
+import { config } from "dotenv";
+import { fileURLToPath } from "node:url";
+import { join, dirname } from "node:path";
 import express from "express";
 import { levelRouter } from "./routes/level.js";
 
+// Load .env from the repo root regardless of cwd or how the server is invoked.
+config({ path: join(dirname(fileURLToPath(import.meta.url)), "../../../.env"), override: true });
+
 export function createApp() {
   const app = express();
+  // Fix 6: CORS — allow any origin so non-Vite-proxy consumers (staging, tests) aren't blocked
+  app.use((_req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Content-Type");
+    if (_req.method === "OPTIONS") { res.sendStatus(204); return; }
+    next();
+  });
   app.use(express.json({ limit: "1mb" }));
   app.get("/health", (_req, res) => res.json({ ok: true }));
   app.use("/api/level", levelRouter);

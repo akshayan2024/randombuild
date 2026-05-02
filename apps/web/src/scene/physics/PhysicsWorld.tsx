@@ -1,9 +1,9 @@
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { useFrame } from "@react-three/fiber";
 import { MeshStandardMaterial, type Mesh } from "three";
 import { useBuildStore } from "../../state/buildStore";
-import { usePhysicsStore } from "../../state/physicsStore";
+import { usePhysicsStore, type FallingBlock } from "../../state/physicsStore";
 import { blockColor, type BlockType } from "../../game/blocks";
 import { parseKey } from "../../game/grid";
 
@@ -20,7 +20,8 @@ export function PhysicsWorld() {
   const hasBlock = useBuildStore((s) => s.hasBlock);
   const commitBlockAt = useBuildStore((s) => s.commitBlockAt);
 
-  const rapierReady = useRef(false);
+  // FIX 2: useState instead of useRef so dependent effects re-trigger after async RAPIER.init()
+  const [rapierReady, setRapierReady] = useState(false);
   const worldRef = useRef<RAPIER.World | null>(null);
   const fixedBodiesRef = useRef<Map<string, RAPIER.RigidBody>>(new Map());
   const fallingBodiesRef = useRef<Map<string, FallingRuntime>>(new Map());
@@ -30,34 +31,35 @@ export function PhysicsWorld() {
     void (async () => {
       await RAPIER.init();
       if (canceled) return;
-      rapierReady.current = true;
       worldRef.current = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
-
-      // Ground (y = 0) as a big fixed cuboid slightly below the surface.
-      const groundBody = worldRef.current.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.5, 0));
-      worldRef.current.createCollider(RAPIER.ColliderDesc.cuboid(200, 0.5, 200), groundBody);
+      const groundBody = worldRef.current.createRigidBody(
+        RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.5, 0),
+      );
+      worldRef.current.createCollider(
+        RAPIER.ColliderDesc.cuboid(200, 0.5, 200),
+        groundBody,
+      );
+      // Triggers re-render → dependent effects re-run with rapierReady=true
+      setRapierReady(true);
     })();
     return () => {
       canceled = true;
     };
   }, []);
 
-  // Keep fixed colliders in sync with committed blocks (simple rebuild-on-change approach).
+  // FIX 2: rapierReady added as dep — this effect now safely re-runs after RAPIER inits.
   useEffect(() => {
-    if (!rapierReady.current || !worldRef.current) return;
+    if (!rapierReady || !worldRef.current) return;
     const world = worldRef.current;
     const fixedBodies = fixedBodiesRef.current;
 
-    // Remove fixed bodies that no longer exist.
     for (const [key, body] of fixedBodies.entries()) {
       if (!(key in committedBlocks)) {
         world.removeRigidBody(body);
         fixedBodies.delete(key);
       }
     }
-
-    // Add fixed bodies for new committed blocks.
-    for (const [key, type] of Object.entries(committedBlocks)) {
+    for (const [key] of Object.entries(committedBlocks)) {
       if (fixedBodies.has(key)) continue;
       const { x, y, z } = parseKey(key);
       const body = world.createRigidBody(
@@ -66,17 +68,16 @@ export function PhysicsWorld() {
       world.createCollider(RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5), body);
       fixedBodies.set(key, body);
     }
-  }, [committedBlocks]);
+  }, [committedBlocks, rapierReady]);
 
-  // Spawn dynamic bodies for falling blocks.
+  // FIX 2: rapierReady added as dep — spawns dynamic bodies only after RAPIER is ready.
   useEffect(() => {
-    if (!rapierReady.current || !worldRef.current) return;
+    if (!rapierReady || !worldRef.current) return;
     const world = worldRef.current;
     const runtimes = fallingBodiesRef.current;
 
     for (const f of falling) {
       if (runtimes.has(f.id)) continue;
-      // Spawn just above the target so it feels responsive (still “falls”, but not from the sky).
       const startY = Math.max(2, f.target.y + 3);
       const body = world.createRigidBody(
         RAPIER.RigidBodyDesc.dynamic()
@@ -86,53 +87,52 @@ export function PhysicsWorld() {
       world.createCollider(RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5), body);
       runtimes.set(f.id, { id: f.id, type: f.type, body });
     }
-  }, [falling]);
+  }, [falling, rapierReady]);
 
   useFrame(() => {
-    if (!rapierReady.current || !worldRef.current) return;
+    // FIX 2: rapierReady is now a closure-captured state value (correct after re-render)
+    if (!rapierReady || !worldRef.current) return;
     const world = worldRef.current;
     world.timestep = 1 / 60;
     world.step();
 
-    // Check for bodies that have settled; commit them into the grid.
     const runtimes = fallingBodiesRef.current;
     for (const rt of runtimes.values()) {
-      const body = rt.body;
-      const lv = body.linvel();
+      const lv = rt.body.linvel();
       const speed = Math.abs(lv.x) + Math.abs(lv.y) + Math.abs(lv.z);
       if (speed > 0.02) continue;
 
-      const t = body.translation();
+      const t = rt.body.translation();
       const gx = Math.round(t.x - 0.5);
       const gz = Math.round(t.z - 0.5);
       let gy = Math.round(t.y - 0.5);
       if (gy < 0) gy = 0;
 
-      // Ensure we don't commit into an occupied cell; stack upward if needed.
       let pos = { x: gx, y: gy, z: gz };
       while (hasBlock(pos)) pos = { x: gx, y: pos.y + 1, z: gz };
 
-      // Commit and remove from physics.
       commitBlockAt(pos, rt.type);
-      removeFalling(rt.id);
-      world.removeRigidBody(body);
+      // FIX 3: removeFalling updates physicsStore (React state) → triggers re-render of
+      // FallingBlocks. The body is cleaned up from the ref BEFORE the state update so
+      // the re-render won't find it and correctly omits the mesh.
+      world.removeRigidBody(rt.body);
       runtimes.delete(rt.id);
+      removeFalling(rt.id);
       break;
     }
   });
 
-  return (
-    <FallingBlocks
-      items={Array.from(fallingBodiesRef.current.values()).map((rt) => ({
-        id: rt.id,
-        type: rt.type,
-        body: rt.body,
-      }))}
-    />
-  );
+  // FIX 3: Pass `falling` (React state from physicsStore) as the driver for rendering.
+  // FallingBlocks re-renders whenever physicsStore.falling changes, not on ref mutations.
+  return <FallingBlocks falling={falling} bodiesRef={fallingBodiesRef} />;
 }
 
-function FallingBlocks(props: { items: FallingRuntime[] }) {
+// FIX 3: Render is driven by physicsStore.falling (React state), body looked up from ref.
+// When removeFalling() is called in useFrame, the store updates → re-render → item gone.
+function FallingBlocks(props: {
+  falling: FallingBlock[];
+  bodiesRef: React.MutableRefObject<Map<string, FallingRuntime>>;
+}) {
   const materials = useMemo(() => {
     const m = new Map<BlockType, MeshStandardMaterial>();
     const types: BlockType[] = ["Wall", "Wood", "Glass", "Roof"];
@@ -153,14 +153,25 @@ function FallingBlocks(props: { items: FallingRuntime[] }) {
 
   return (
     <>
-      {props.items.map((it) => (
-        <FallingBlockMesh key={it.id} body={it.body} material={materials.get(it.type)!} />
-      ))}
+      {props.falling.map((f) => {
+        const rt = props.bodiesRef.current.get(f.id);
+        if (!rt) return null;
+        return (
+          <FallingBlockMesh
+            key={f.id}
+            body={rt.body}
+            material={materials.get(rt.type)!}
+          />
+        );
+      })}
     </>
   );
 }
 
-function FallingBlockMesh(props: { body: RAPIER.RigidBody; material: MeshStandardMaterial }) {
+function FallingBlockMesh(props: {
+  body: RAPIER.RigidBody;
+  material: MeshStandardMaterial;
+}) {
   const ref = useRef<Mesh | null>(null);
 
   useFrame(() => {

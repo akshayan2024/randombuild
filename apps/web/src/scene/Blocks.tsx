@@ -17,9 +17,11 @@ export function Blocks() {
 
   return (
     <>
-      {Object.entries(byType).map(([type, list]) => (
-        <BlocksOfType key={type} type={type as BlockType} keys={list} />
-      ))}
+      {Object.entries(byType)
+        .filter(([, list]) => list.length > 0)  // Fix 9: skip empty type buckets
+        .map(([type, list]) => (
+          <BlocksOfType key={type} type={type as BlockType} keys={list} />
+        ))}
     </>
   );
 }
@@ -45,49 +47,49 @@ function BlocksOfType(props: { type: BlockType; keys: string[] }) {
 
   return (
     <instancedMesh
+      key={count}  // Fix 4: force remount so Three.js reallocates the buffer on count growth
       args={[undefined, material, count]}
       castShadow
       receiveShadow
-      onContextMenu={(e) => e.nativeEvent.preventDefault()}
-      onPointerDown={(e) => {
+      // Right-click: remove block.
+      // Handled in onContextMenu so it works reliably across browsers and doesn't
+      // conflict with OrbitControls' left-drag camera rotation.
+      onContextMenu={(e) => {
+        e.nativeEvent.preventDefault();
         const index = e.instanceId ?? -1;
         if (index < 0 || index >= props.keys.length) return;
         const pos = parseKey(props.keys[index]);
+        e.stopPropagation();
+        removeBlock(pos);
+      }}
+      // Left-click: place adjacent block on the clicked face.
+      // onClick fires only after a genuine short click (pointer didn't move much),
+      // so a left-drag to rotate the camera never accidentally places a block.
+      onClick={(e) => {
+        const index = e.instanceId ?? -1;
+        if (index < 0 || index >= props.keys.length) return;
+        const pos = parseKey(props.keys[index]);
+        e.stopPropagation();
 
-        // Right click: remove
-        if (e.button === 2) {
-          e.stopPropagation();
-          removeBlock(pos);
-          return;
-        }
+        const faceNormal = e.face?.normal;
+        if (!faceNormal) return;
 
-        // Left click: place adjacent on the clicked face
-        if (e.button === 0) {
-          e.stopPropagation();
-          const faceNormal = e.face?.normal;
-          if (!faceNormal) return;
+        tmpNormal.copy(faceNormal);
+        tmpNormalMatrix.getNormalMatrix(e.object.matrixWorld);
+        tmpNormal.applyMatrix3(tmpNormalMatrix);
 
-          // face normal is in local space; convert to world-ish axis direction
-          // (our cubes are axis-aligned, so this becomes a clean +/- axis)
-          tmpNormal.copy(faceNormal);
-          tmpNormalMatrix.getNormalMatrix(e.object.matrixWorld);
-          tmpNormal.applyMatrix3(tmpNormalMatrix);
+        const ax = Math.abs(tmpNormal.x);
+        const ay = Math.abs(tmpNormal.y);
+        const az = Math.abs(tmpNormal.z);
 
-          const ax = Math.abs(tmpNormal.x);
-          const ay = Math.abs(tmpNormal.y);
-          const az = Math.abs(tmpNormal.z);
+        let dx = 0, dy = 0, dz = 0;
+        if (ax >= ay && ax >= az) dx = tmpNormal.x > 0 ? 1 : -1;
+        else if (ay >= ax && ay >= az) dy = tmpNormal.y > 0 ? 1 : -1;
+        else dz = tmpNormal.z > 0 ? 1 : -1;
 
-          let dx = 0;
-          let dy = 0;
-          let dz = 0;
-          if (ax >= ay && ax >= az) dx = tmpNormal.x > 0 ? 1 : -1;
-          else if (ay >= ax && ay >= az) dy = tmpNormal.y > 0 ? 1 : -1;
-          else dz = tmpNormal.z > 0 ? 1 : -1;
-
-          const target = { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
-          if (hasBlock(target)) return;
-          commitBlockAt(target, selected);
-        }
+        const target = { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
+        if (hasBlock(target)) return;
+        commitBlockAt(target, selected);
       }}
       ref={(mesh) => {
         if (!mesh) return;

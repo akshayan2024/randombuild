@@ -40,7 +40,7 @@ export function Palette() {
       ))}
       <div style={{ width: 1, background: "rgba(255,255,255,0.15)", margin: "0 4px" }} />
       <div style={{ fontSize: 12, opacity: 0.9, alignSelf: "center" }}>
-        Left click: place • Right click: remove
+        Click to place • Right-drag to rotate • Right-click to remove • Scroll to zoom
       </div>
     </div>
   );
