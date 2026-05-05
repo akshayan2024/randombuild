@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 import express from "express";
 import { levelRouter } from "./routes/level.js";
+import { hintRouter } from "./routes/hint.js";
+import { telemetryRouter } from "./routes/telemetry.js";
 
 // Load .env from the repo root regardless of cwd or how the server is invoked.
 config({ path: join(dirname(fileURLToPath(import.meta.url)), "../../../.env"), override: true });
@@ -20,6 +22,8 @@ export function createApp() {
   app.use(express.json({ limit: "1mb" }));
   app.get("/health", (_req, res) => res.json({ ok: true }));
   app.use("/api/level", levelRouter);
+  app.use("/api/hint", hintRouter);
+  app.use("/api/telemetry", telemetryRouter);
   return app;
 }
 

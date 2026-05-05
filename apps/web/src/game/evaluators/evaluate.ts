@@ -1,5 +1,5 @@
 import { parseKey } from "../grid";
-import type { BlockType } from "../blocks";
+import { BLOCK_META, type BlockType } from "../blocks";
 import type { BuildSnapshot, Rule, RuleResult, ScoreLine, ScoreSummary, ScoringItem } from "./types";
 
 export function evaluateRule(build: BuildSnapshot, rule: Rule): RuleResult {
@@ -62,6 +62,49 @@ export function evaluateRule(build: BuildSnapshot, rule: Rule): RuleResult {
       }, 0);
       const met = maxY >= minHeight;
       return { ruleId: rule.id, met, detail: `${maxY}/${minHeight} height` };
+    }
+    case "door_present": {
+      const doorCount = countType(build.blocks, "Door");
+      const met = doorCount >= 1;
+      return { ruleId: rule.id, met, detail: met ? "Door is present" : "Missing a door" };
+    }
+    case "furniture_count_min": {
+      const minFurniture = asInt(rule.evaluate.minFurniture, 0);
+      const fCount = 
+        countType(build.blocks, "Bed") +
+        countType(build.blocks, "Table") +
+        countType(build.blocks, "Chair") +
+        countType(build.blocks, "Lamp") +
+        countType(build.blocks, "Plant") +
+        countType(build.blocks, "TV");
+      const met = fCount >= minFurniture;
+      return { ruleId: rule.id, met, detail: `${fCount}/${minFurniture} furniture items` };
+    }
+    case "kitchen_blocks_any2of3": {
+      const hasSink = countType(build.blocks, "Sink") > 0;
+      const hasStove = countType(build.blocks, "Stove") > 0;
+      const hasCounter = countType(build.blocks, "Counter") > 0;
+      const count = (hasSink ? 1 : 0) + (hasStove ? 1 : 0) + (hasCounter ? 1 : 0);
+      const met = count >= 2;
+      return { ruleId: rule.id, met, detail: `${count}/2 kitchen block types` };
+    }
+    case "inside_house_min": {
+      const minItems = asInt(rule.evaluate.minItems, 0);
+      const insideCount = countInsideItems2D(build.blocks);
+      const met = insideCount >= minItems;
+      return { ruleId: rule.id, met, detail: `${insideCount}/${minItems} items inside` };
+    }
+    case "light_sources_min": {
+      const minLights = asInt(rule.evaluate.minLights, 0);
+      const lightCount = Object.values(build.blocks).filter((t) => BLOCK_META[t]?.pointLight).length;
+      const met = lightCount >= minLights;
+      return { ruleId: rule.id, met, detail: `${lightCount}/${minLights} light sources` };
+    }
+    case "landscaping_blocks_min": {
+      const minLandscaping = asInt(rule.evaluate.minLandscaping, 0);
+      const lCount = Object.values(build.blocks).filter((t) => BLOCK_META[t]?.category === "Landscaping").length;
+      const met = lCount >= minLandscaping;
+      return { ruleId: rule.id, met, detail: `${lCount}/${minLandscaping} landscaping blocks` };
     }
     default:
       return { ruleId: rule.id, met: false, detail: `Unknown rule type: ${rule.evaluate.type}` };
@@ -128,9 +171,7 @@ function countFloatingBlocks(blocks: Record<string, BlockType>): number {
   return floating;
 }
 
-function countEnclosedRooms2D(blocks: Record<string, BlockType>): number {
-  // MVP room detector: 2D flood-fill on ground plane (y=0).
-  // Walls are any blocks at y=0. Ground itself counts as floor.
+function getOutsideGrid(blocks: Record<string, BlockType>) {
   const wall = new Set<string>();
   let minX = Infinity;
   let maxX = -Infinity;
@@ -147,9 +188,8 @@ function countEnclosedRooms2D(blocks: Record<string, BlockType>): number {
     maxZ = Math.max(maxZ, z);
   }
 
-  if (wall.size === 0) return 0;
+  if (wall.size === 0) return null;
 
-  // Expand bounds by 2 so outside flood has space.
   minX -= 2;
   maxX += 2;
   minZ -= 2;
@@ -174,7 +214,6 @@ function countEnclosedRooms2D(blocks: Record<string, BlockType>): number {
     qz.push(z);
   };
 
-  // Flood-fill outside from boundary.
   for (let x = minX; x <= maxX; x++) {
     push(x, minZ);
     push(x, maxZ);
@@ -199,7 +238,14 @@ function countEnclosedRooms2D(blocks: Record<string, BlockType>): number {
     }
   }
 
-  // Any non-wall cell not marked outside belongs to an enclosed room region.
+  return { minX, maxX, minZ, maxZ, w, h, idx, outside, wall, inBounds };
+}
+
+function countEnclosedRooms2D(blocks: Record<string, BlockType>): number {
+  const grid = getOutsideGrid(blocks);
+  if (!grid) return 0;
+  const { minX, maxX, minZ, maxZ, w, h, idx, outside, wall, inBounds } = grid;
+
   const visited = new Uint8Array(w * h);
   let rooms = 0;
 
@@ -241,4 +287,29 @@ function countEnclosedRooms2D(blocks: Record<string, BlockType>): number {
   }
 
   return rooms;
+}
+
+function countInsideItems2D(blocks: Record<string, BlockType>): number {
+  const grid = getOutsideGrid(blocks);
+  if (!grid) return 0;
+  const { idx, outside, inBounds, wall } = grid;
+
+  const itemTypes = new Set(["Bed", "Table", "Chair", "Lamp", "Plant", "TV", "Sink", "Stove", "Counter"]);
+  let insideCount = 0;
+
+  for (const [key, type] of Object.entries(blocks)) {
+    if (itemTypes.has(type)) {
+      const { x, z } = parseKey(key);
+      if (inBounds(x, z)) {
+        const i = idx(x, z);
+        // If it's not marked outside, and not a wall cell, it's inside a room!
+        // (Wait, items CAN be placed on walls sometimes, but let's assume they shouldn't count as inside the room if they are IN the wall itself).
+        if (!outside[i] && !wall.has(`${x},${z}`)) {
+          insideCount++;
+        }
+      }
+    }
+  }
+
+  return insideCount;
 }

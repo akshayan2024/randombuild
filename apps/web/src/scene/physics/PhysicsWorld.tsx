@@ -4,7 +4,7 @@ import { useFrame } from "@react-three/fiber";
 import { MeshStandardMaterial, type Mesh } from "three";
 import { useBuildStore } from "../../state/buildStore";
 import { usePhysicsStore, type FallingBlock } from "../../state/physicsStore";
-import { blockColor, type BlockType } from "../../game/blocks";
+import { BLOCK_META, blockColor, blockTypes, type BlockType } from "../../game/blocks";
 import { parseKey } from "../../game/grid";
 
 type FallingRuntime = {
@@ -135,16 +135,18 @@ function FallingBlocks(props: {
 }) {
   const materials = useMemo(() => {
     const m = new Map<BlockType, MeshStandardMaterial>();
-    const types: BlockType[] = ["Wall", "Wood", "Glass", "Roof"];
-    for (const t of types) {
+    for (const t of blockTypes) {
+      const meta = BLOCK_META[t];
       m.set(
         t,
         new MeshStandardMaterial({
           color: blockColor(t),
           roughness: 0.85,
           metalness: 0.0,
-          transparent: t === "Glass",
-          opacity: t === "Glass" ? 0.5 : 1,
+          transparent: !!meta.transparent,
+          opacity: meta.opacity ?? 1,
+          emissive: meta.emissive ?? "#000",
+          emissiveIntensity: meta.emissiveIntensity ?? 0,
         }),
       );
     }
